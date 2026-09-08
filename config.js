@@ -3,6 +3,6 @@
  * Both values below are safe to be public: the anon key only grants
  * access that your row-level security policies allow. */
 window.LEDGER_CONFIG = {
-  SUPABASE_URL: 'YOUR_SUPABASE_URL',
-  SUPABASE_ANON_KEY: 'YOUR_SUPABASE_ANON_KEY'
+  SUPABASE_URL: 'https://vzetlxctjgmryuunwiyq.supabase.co',
+  SUPABASE_ANON_KEY: 'sb_publishable_HLv-u5a_XeaO_mn8qwucmw_4mptbBOJ'
 };
