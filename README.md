@@ -2,7 +2,7 @@
 
 A small personal app for tracking credit cards, what you owe, and when you'll be clear of it.
 
-Four screens: Overview, Cards, Payoff, Budget. It works offline, installs to your home screen with its own icon, and syncs across your devices once you connect a database.
+Five screens: Overview, Cards, Accounts, Payoff, Budget. It works offline, installs to your home screen with its own icon, and syncs across your devices once you connect a database.
 
 ---
 
@@ -89,7 +89,9 @@ The screen tells you what switching would cost or save, so you can decide with t
 
 If your minimums don't cover the interest, it says so plainly and tells you how much more per month is needed just to stop the balance climbing.
 
-**Budget.** Income and fixed expenses. It works out what's genuinely free after your minimums and can send that straight to your payoff plan.
+**Accounts.** Add checking, savings, and cash accounts with current balances so you can see your available cash and net position against debt.
+
+**Budget.** Add your monthly income, recurring expenses, and other fixed costs. It works out what's genuinely free after your fixed costs and debt payments, and can send that straight to your payoff plan.
 
 ---
 

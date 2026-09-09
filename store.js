@@ -13,6 +13,8 @@ const LOCAL_KEY = 'ledger.v1';
 
 const DEFAULTS = {
   cards: [],
+  accounts: [],
+  expenses: [],
   budget: { income: 0, expenses: 0 },
   settings: { method: 'avalanche', extraPayment: 0 }
 };
@@ -41,6 +43,8 @@ export const Store = {
       const parsed = JSON.parse(raw);
       return {
         cards: Array.isArray(parsed.cards) ? parsed.cards : [],
+        accounts: Array.isArray(parsed.accounts) ? parsed.accounts : [],
+        expenses: Array.isArray(parsed.expenses) ? parsed.expenses : [],
         budget: (parsed.budget && typeof parsed.budget === 'object') ? parsed.budget : clone(DEFAULTS.budget),
         settings: (parsed.settings && typeof parsed.settings === 'object') ? parsed.settings : clone(DEFAULTS.settings)
       };
@@ -104,6 +108,8 @@ export const Store = {
         const p = data.payload;
         this.data = {
           cards: Array.isArray(p.cards) ? p.cards : [],
+          accounts: Array.isArray(p.accounts) ? p.accounts : [],
+          expenses: Array.isArray(p.expenses) ? p.expenses : [],
           budget: (p.budget && typeof p.budget === 'object') ? p.budget : clone(DEFAULTS.budget),
           settings: (p.settings && typeof p.settings === 'object') ? p.settings : clone(DEFAULTS.settings)
         };
@@ -176,6 +182,8 @@ export const Store = {
     if (!p || typeof p !== 'object') throw new Error('Not a Ledger backup');
     this.data = {
       cards: Array.isArray(p.cards) ? p.cards : [],
+      accounts: Array.isArray(p.accounts) ? p.accounts : [],
+      expenses: Array.isArray(p.expenses) ? p.expenses : [],
       budget: (p.budget && typeof p.budget === 'object') ? p.budget : clone(DEFAULTS.budget),
       settings: (p.settings && typeof p.settings === 'object') ? p.settings : clone(DEFAULTS.settings)
     };

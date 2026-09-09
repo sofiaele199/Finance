@@ -3,7 +3,8 @@ import { simulatePayoff, monthlyInterest, totalBalance, totalLimit, totalMin, ut
 
 const ui = {
   tab: 'overview',
-  editingId: null,       // null | 'new' | card id
+  editorKind: null,      // null | 'card' | 'account' | 'expense'
+  editingId: null,       // null | 'new' | item id
   confirmDelete: false,
   confirmReset: false,
   booting: true,
@@ -18,6 +19,7 @@ const D = () => Store.data;
 const money = n => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const whole = n => '$' + Math.round(Number(n) || 0).toLocaleString('en-US');
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+const num = n => Number(n) || 0;
 
 function monthLabel(monthsAhead) {
   const d = new Date();
@@ -29,6 +31,19 @@ function uid() {
   return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'c' + Date.now() + Math.random().toString(16).slice(2);
 }
 const utilClass = p => p >= 75 ? 'danger' : p >= 40 ? 'warn' : '';
+
+/* ---------- computed totals ---------- */
+const totalCash = () => (D().accounts || []).reduce((s, a) => s + num(a.balance), 0);
+const listedExpensesTotal = () => (D().expenses || []).reduce((s, e) => s + num(e.amount), 0);
+const otherExpenses = () => num(D().budget && D().budget.expenses);
+const fixedExpensesTotal = () => listedExpensesTotal() + otherExpenses();
+const monthlyDebtPlan = () => totalMin(D().cards) + num(D().settings && D().settings.extraPayment);
+const monthlyLeftAfterPlan = () => num(D().budget && D().budget.income) - fixedExpensesTotal() - monthlyDebtPlan();
+const availableForExtra = () => num(D().budget && D().budget.income) - fixedExpensesTotal() - totalMin(D().cards);
+const cashCoverageMonths = () => {
+  const fixed = fixedExpensesTotal();
+  return fixed > 0 ? totalCash() / fixed : null;
+};
 
 /* ---------- views ---------- */
 function viewLogin() {
@@ -48,51 +63,97 @@ function viewLogin() {
 
 function viewOverview() {
   const cards = D().cards;
-  if (cards.length === 0) {
+  const accounts = D().accounts || [];
+  const income = num(D().budget.income);
+  const fixed = fixedExpensesTotal();
+  const debtMin = totalMin(cards);
+  const plannedExtra = num(D().settings.extraPayment);
+  const plannedDebt = debtMin + plannedExtra;
+  const freeAfterPlan = monthlyLeftAfterPlan();
+  const debt = totalBalance(cards);
+  const cash = totalCash();
+  const net = cash - debt;
+  const cover = cashCoverageMonths();
+
+  if (
+    cards.length === 0 &&
+    accounts.length === 0 &&
+    income === 0 &&
+    fixed === 0
+  ) {
     return `<div class="empty-state">
-      Nothing tracked yet. Add your cards and Ledger will show what you owe, how much of your credit you're using, and when you'll be clear.
+      Add your cards, accounts, and monthly expenses to get a clear picture of where you stand.
       <div class="add-link"><button class="btn" data-action="add-card">Add your first card</button></div>
+      <div class="add-link"><button class="btn secondary" data-action="add-account">Add a bank account</button></div>
     </div>`;
   }
-
-  const util = utilization(cards);
-  const sim = simulatePayoff(cards, D().settings.extraPayment, D().settings.method);
 
   let banner;
-  if (sim.empty) {
-    banner = `<div class="banner">Every card is at zero. Nothing owed.</div>`;
-  } else if (!sim.feasible) {
-    const gap = monthlyInterest(cards) - totalMin(cards);
-    banner = `<div class="banner warn"><strong>Your balance is growing.</strong> Interest is running ${whole(Math.max(0, gap))} a month ahead of your payments. Open Payoff to change the plan.</div>`;
+  if (cards.length === 0) {
+    banner = `<div class="banner">No debt tracked yet. Add your cards to see payoff timing and total interest.</div>`;
   } else {
-    banner = `<div class="banner">On your current plan, debt-free by <strong>${monthLabel(sim.months)}</strong>.</div>`;
+    const sim = simulatePayoff(cards, plannedExtra, D().settings.method);
+    if (sim.empty) {
+      banner = `<div class="banner">Every card is at zero. Nothing owed.</div>`;
+    } else if (!sim.feasible) {
+      const gap = monthlyInterest(cards) - totalMin(cards);
+      banner = `<div class="banner warn"><strong>Your balance is growing.</strong> Interest is running ${whole(Math.max(0, gap))} a month ahead of your payments. Open Payoff to change the plan.</div>`;
+    } else {
+      banner = `<div class="banner">On your current plan, debt-free by <strong>${monthLabel(sim.months)}</strong>.</div>`;
+    }
   }
 
-  const rows = cards.map(c => {
-    const pct = c.limit > 0 ? Math.min(100, (c.balance / c.limit) * 100) : 0;
-    return `<div class="row">
-      <div class="row-top"><span class="row-name">${esc(c.name)}</span><span class="row-balance">${money(c.balance)}</span></div>
-      <div class="row-meta">${c.limit > 0 ? pct.toFixed(0) + '% of ' + whole(c.limit) : 'No limit set'} · ${c.apr}% APR</div>
-      <div class="bar-track"><div class="bar-fill ${utilClass(pct)}" style="width:${pct}%"></div></div>
-    </div>`;
-  }).join('');
+  const cardRows = cards.length > 0
+    ? cards.map(c => {
+        const pct = c.limit > 0 ? Math.min(100, (c.balance / c.limit) * 100) : 0;
+        return `<div class="row">
+          <div class="row-top"><span class="row-name">${esc(c.name)}</span><span class="row-balance">${money(c.balance)}</span></div>
+          <div class="row-meta">${c.limit > 0 ? pct.toFixed(0) + '% of ' + whole(c.limit) : 'No limit set'} · ${c.apr}% APR</div>
+          <div class="bar-track"><div class="bar-fill ${utilClass(pct)}" style="width:${pct}%"></div></div>
+        </div>`;
+      }).join('')
+    : `<div class="row"><div class="row-meta">No cards added yet.</div></div>`;
 
+  const accountRows = accounts.length > 0
+    ? accounts.map(a => `<div class="row">
+        <div class="row-top">
+          <span class="row-name">${esc(a.name || 'Untitled account')}</span>
+          <span class="row-balance">${money(a.balance)}</span>
+        </div>
+        <div class="row-meta">${a.type ? esc(a.type) : 'Bank account'}</div>
+      </div>`).join('')
+    : `<div class="row"><div class="row-meta">No accounts added yet.</div></div>`;
+
+  const util = utilization(cards);
   return `
     <div class="figure-row">
-      <div class="figure"><div class="num danger">${whole(totalBalance(cards))}</div><div class="label">Total owed</div></div>
-      <div class="figure"><div class="num">${util.toFixed(0)}%</div><div class="label">Utilization</div></div>
+      <div class="figure"><div class="num danger">${whole(debt)}</div><div class="label">Total debt</div></div>
+      <div class="figure"><div class="num">${whole(cash)}</div><div class="label">Cash on hand</div></div>
+    </div>
+    <div class="figure-row">
+      <div class="figure"><div class="num ${net >= 0 ? 'accent' : 'danger'}">${whole(net)}</div><div class="label">Net position (cash minus debt)</div></div>
+      <div class="figure"><div class="num ${freeAfterPlan >= 0 ? 'accent' : 'danger'}">${whole(freeAfterPlan)}</div><div class="label">Left after monthly plan</div></div>
     </div>
     ${banner}
+
     <div class="block">
-      <p class="block-title">Your cards</p>
-      <div class="row-list">${rows}</div>
-    </div>
-    <div class="block">
-      <p class="block-title">Going out each month</p>
-      <div class="figure">
-        <div class="num accent">${whole(totalMin(cards) + D().settings.extraPayment)}</div>
-        <div class="label">${whole(totalMin(cards))} in minimums${D().settings.extraPayment > 0 ? ' plus ' + whole(D().settings.extraPayment) + ' extra' : ''}</div>
+      <p class="block-title">Monthly snapshot</p>
+      <div class="row-list">
+        <div class="row"><div class="row-top"><span class="row-name">Income</span><span class="row-balance">${whole(income)}</span></div></div>
+        <div class="row"><div class="row-top"><span class="row-name">Fixed expenses</span><span class="row-balance">${whole(fixed)}</span></div><div class="row-meta">Recurring items plus other fixed costs</div></div>
+        <div class="row"><div class="row-top"><span class="row-name">Debt payment plan</span><span class="row-balance">${whole(plannedDebt)}</span></div><div class="row-meta">${whole(debtMin)} minimums${plannedExtra > 0 ? ` + ${whole(plannedExtra)} extra` : ''}</div></div>
+        <div class="row"><div class="row-top"><span class="row-name">Cash coverage</span><span class="row-balance">${cover == null ? '—' : cover.toFixed(1) + ' mo'}</span></div><div class="row-meta">How many months current cash covers fixed expenses</div></div>
       </div>
+    </div>
+
+    <div class="block">
+      <p class="block-title">Cards (${cards.length})${cards.length > 0 ? ` · ${util.toFixed(0)}% utilization` : ''}</p>
+      <div class="row-list">${cardRows}</div>
+    </div>
+
+    <div class="block">
+      <p class="block-title">Bank accounts (${accounts.length})</p>
+      <div class="row-list">${accountRows}</div>
     </div>`;
 }
 
@@ -111,15 +172,36 @@ function viewCards() {
     </div>`;
   }).join('');
   return `<div class="row-list">${rows}</div>
+    <div style="margin-top:12px"><button class="btn full" data-action="add-card">Add another card</button></div>
     <p class="note" style="margin-top:12px">Tap a card to update its balance or remove it.</p>`;
 }
 
-function viewEditor() {
+function viewAccounts() {
+  const accounts = D().accounts || [];
+  if (accounts.length === 0) {
+    return `<div class="empty-state">No bank accounts yet.
+      <div class="add-link"><button class="btn" data-action="add-account">Add an account</button></div></div>`;
+  }
+  const rows = accounts.map(a => `<div class="row tappable" data-action="edit-account" data-id="${esc(a.id)}">
+      <div class="row-top"><span class="row-name">${esc(a.name || 'Untitled account')}</span><span class="row-balance">${money(a.balance)}</span></div>
+      <div class="row-meta">${a.type ? esc(a.type) : 'Bank account'}</div>
+    </div>`).join('');
+
+  return `
+    <div class="figure-row">
+      <div class="figure"><div class="num accent">${whole(totalCash())}</div><div class="label">Total cash across all accounts</div></div>
+    </div>
+    <div class="row-list">${rows}</div>
+    <div style="margin-top:12px"><button class="btn full" data-action="add-account">Add another account</button></div>
+    <p class="note" style="margin-top:12px">Tap an account to update its amount or remove it.</p>`;
+}
+
+function cardEditor() {
   const isNew = ui.editingId === 'new';
   const card = isNew
     ? { name: '', balance: '', limit: '', apr: '', minPayment: '', dueDay: '' }
     : D().cards.find(c => c.id === ui.editingId);
-  if (!card) { ui.editingId = null; return viewCards(); }
+  if (!card) { closeEditor(false); return viewCards(); }
 
   return `
     <div class="editor">
@@ -159,6 +241,82 @@ function viewEditor() {
           ${ui.confirmDelete ? 'Tap again to delete' : 'Delete card'}</button>
       </div>` : ''}
     </div>`;
+}
+
+function accountEditor() {
+  const isNew = ui.editingId === 'new';
+  const account = isNew
+    ? { name: '', type: '', balance: '' }
+    : (D().accounts || []).find(a => a.id === ui.editingId);
+  if (!account) { closeEditor(false); return viewAccounts(); }
+
+  return `
+    <div class="editor">
+      <div class="editor-head">
+        <h2>${isNew ? 'Add a bank account' : 'Edit account'}</h2>
+        <button type="button" class="link-btn" data-action="close-editor">Cancel</button>
+      </div>
+
+      <label class="first" for="a-name">Account name</label>
+      <input type="text" id="a-name" value="${esc(account.name)}" placeholder="Chase Checking" autocomplete="off" autocapitalize="words">
+
+      <label for="a-type">Type, optional</label>
+      <input type="text" id="a-type" value="${esc(account.type)}" placeholder="Checking, Savings, Cash">
+
+      <label for="a-balance">Current balance</label>
+      <input type="number" id="a-balance" inputmode="decimal" min="0" step="0.01" value="${account.balance}" placeholder="0">
+
+      <p class="form-error" id="formError">Give the account a name before saving.</p>
+
+      <div class="editor-actions">
+        <button type="button" class="btn full" data-action="save-account">${isNew ? 'Add account' : 'Save account'}</button>
+      </div>
+      ${!isNew ? `<div class="editor-actions">
+        <button type="button" class="btn secondary full" data-action="${ui.confirmDelete ? 'delete-confirm' : 'delete-ask'}"
+          ${ui.confirmDelete ? 'style="border-color:var(--danger);color:var(--danger)"' : ''}>
+          ${ui.confirmDelete ? 'Tap again to delete' : 'Delete account'}</button>
+      </div>` : ''}
+    </div>`;
+}
+
+function expenseEditor() {
+  const isNew = ui.editingId === 'new';
+  const expense = isNew
+    ? { name: '', amount: '' }
+    : (D().expenses || []).find(x => x.id === ui.editingId);
+  if (!expense) { closeEditor(false); return viewBudget(); }
+
+  return `
+    <div class="editor">
+      <div class="editor-head">
+        <h2>${isNew ? 'Add monthly expense' : 'Edit monthly expense'}</h2>
+        <button type="button" class="link-btn" data-action="close-editor">Cancel</button>
+      </div>
+
+      <label class="first" for="e-name">Expense name</label>
+      <input type="text" id="e-name" value="${esc(expense.name)}" placeholder="Rent, Phone, Insurance" autocomplete="off" autocapitalize="words">
+
+      <label for="e-amount">Amount per month</label>
+      <input type="number" id="e-amount" inputmode="decimal" min="0" step="0.01" value="${expense.amount}" placeholder="0">
+
+      <p class="form-error" id="formError">Give this expense a name before saving.</p>
+
+      <div class="editor-actions">
+        <button type="button" class="btn full" data-action="save-expense">${isNew ? 'Add expense' : 'Save expense'}</button>
+      </div>
+      ${!isNew ? `<div class="editor-actions">
+        <button type="button" class="btn secondary full" data-action="${ui.confirmDelete ? 'delete-confirm' : 'delete-ask'}"
+          ${ui.confirmDelete ? 'style="border-color:var(--danger);color:var(--danger)"' : ''}>
+          ${ui.confirmDelete ? 'Tap again to delete' : 'Delete expense'}</button>
+      </div>` : ''}
+    </div>`;
+}
+
+function viewEditor() {
+  if (ui.editorKind === 'card') return cardEditor();
+  if (ui.editorKind === 'account') return accountEditor();
+  if (ui.editorKind === 'expense') return expenseEditor();
+  return '';
 }
 
 function payoffResult() {
@@ -226,29 +384,48 @@ function viewPayoff() {
 }
 
 function budgetResult() {
+  const income = num(D().budget.income);
+  const fixed = fixedExpensesTotal();
   const min = totalMin(D().cards);
-  const left = D().budget.income - D().budget.expenses - min;
+  const extra = num(D().settings.extraPayment);
+  const debtPlan = min + extra;
+  const left = income - fixed - debtPlan;
+  const available = availableForExtra();
+  const canApply = D().cards.length > 0 && available > 0;
+
   return `
     <div class="figure">
       <div class="num ${left >= 0 ? 'accent' : 'danger'}">${whole(left)}</div>
-      <div class="label">Left after ${whole(D().budget.expenses)} of expenses and ${whole(min)} of minimums</div>
+      <div class="label">Left after ${whole(fixed)} of fixed expenses and ${whole(debtPlan)} of debt payments</div>
     </div>
-    ${left > 0 ? `<div style="margin-top:14px"><button class="btn full" data-action="apply-extra">Put ${whole(left)} toward debt</button></div>` : ''}
-    ${left < 0 ? `<div class="banner warn" style="margin-top:14px">You're short ${whole(Math.abs(left))} a month before any extra debt payment.</div>` : ''}`;
+    ${canApply ? `<div style="margin-top:14px"><button class="btn full" data-action="apply-extra">Set extra payment to ${whole(available)}</button></div>` : ''}
+    ${left < 0 ? `<div class="banner warn" style="margin-top:14px">You're short ${whole(Math.abs(left))} a month on the current plan.</div>` : ''}`;
 }
 
 function viewBudget() {
   const signedIn = Store.mode === 'synced' && Store.user;
+  const expenses = D().expenses || [];
+  const expenseRows = expenses.length > 0
+    ? expenses.map(x => `<div class="row tappable" data-action="edit-expense" data-id="${esc(x.id)}">
+        <div class="row-top"><span class="row-name">${esc(x.name || 'Untitled expense')}</span><span class="row-balance">${money(x.amount)}</span></div>
+      </div>`).join('')
+    : `<div class="row"><div class="row-meta">No recurring expenses added yet.</div></div>`;
+
   return `
     <div class="block">
       <label class="first" for="inc">Monthly income, after tax</label>
       <input type="number" id="inc" inputmode="decimal" min="0" step="50" value="${D().budget.income || ''}" placeholder="0" data-live="income">
     </div>
+
     <div class="block">
-      <label class="first" for="exp">Fixed monthly expenses</label>
+      <p class="block-title">Recurring monthly expenses</p>
+      <div class="row-list">${expenseRows}</div>
+      <div style="margin-top:12px"><button type="button" class="btn full" data-action="add-expense">Add recurring expense</button></div>
+      <label for="exp">Other fixed expenses not listed above</label>
       <input type="number" id="exp" inputmode="decimal" min="0" step="50" value="${D().budget.expenses || ''}" placeholder="0" data-live="expenses">
-      <p class="note">Rent, utilities, groceries, transport, subscriptions. Leave out card minimums, those are already counted.</p>
+      <p class="note">Leave card minimums out. Ledger already counts debt minimums separately.</p>
     </div>
+
     <div class="block">
       <p class="block-title">Free for debt</p>
       <div id="budgetResult">${budgetResult()}</div>
@@ -281,7 +458,7 @@ function render() {
   const content = document.getElementById('content');
   const tabbar = document.getElementById('tabbar');
   const fab = document.getElementById('fab');
-  const editing = !!ui.editingId;
+  const editing = !!ui.editorKind;
   const gated = ui.needsLogin;
 
   tabbar.style.display = (gated || ui.booting) ? 'none' : 'flex';
@@ -290,16 +467,20 @@ function render() {
   document.querySelectorAll('.tab-btn').forEach(b =>
     b.classList.toggle('active', !editing && b.dataset.tab === ui.tab));
 
-  if (ui.booting)               content.innerHTML = '<div class="loading">Opening your ledger…</div>';
-  else if (gated)               content.innerHTML = viewLogin();
-  else if (editing)             content.innerHTML = viewEditor();
-  else if (ui.tab === 'overview') content.innerHTML = viewOverview();
-  else if (ui.tab === 'cards')    content.innerHTML = viewCards();
-  else if (ui.tab === 'payoff')   content.innerHTML = viewPayoff();
-  else                            content.innerHTML = viewBudget();
+  if (ui.booting)                  content.innerHTML = '<div class="loading">Opening your ledger…</div>';
+  else if (gated)                  content.innerHTML = viewLogin();
+  else if (editing)                content.innerHTML = viewEditor();
+  else if (ui.tab === 'overview')  content.innerHTML = viewOverview();
+  else if (ui.tab === 'cards')     content.innerHTML = viewCards();
+  else if (ui.tab === 'accounts')  content.innerHTML = viewAccounts();
+  else if (ui.tab === 'payoff')    content.innerHTML = viewPayoff();
+  else                             content.innerHTML = viewBudget();
 
   if (editing && ui.editingId === 'new') {
-    const n = document.getElementById('f-name');
+    const firstField =
+      ui.editorKind === 'card' ? 'f-name' :
+      ui.editorKind === 'account' ? 'a-name' : 'e-name';
+    const n = document.getElementById(firstField);
     if (n) setTimeout(() => n.focus(), 60);
   }
 }
@@ -327,6 +508,20 @@ function numField(id) {
   return isFinite(v) && v >= 0 ? v : 0;
 }
 
+function openEditor(kind, id) {
+  ui.editorKind = kind;
+  ui.editingId = id;
+  ui.confirmDelete = false;
+  render();
+}
+
+function closeEditor(reRender = true) {
+  ui.editorKind = null;
+  ui.editingId = null;
+  ui.confirmDelete = false;
+  if (reRender) render();
+}
+
 function saveCard() {
   const name = document.getElementById('f-name').value.trim();
   if (!name) {
@@ -351,11 +546,85 @@ function saveCard() {
   }
 
   Store.save({ immediate: true });
-  ui.editingId = null;
-  ui.confirmDelete = false;
+  closeEditor(false);
   ui.tab = 'cards';
   render();
   window.scrollTo(0, 0);
+}
+
+function saveAccount() {
+  const name = document.getElementById('a-name').value.trim();
+  if (!name) {
+    document.getElementById('formError').style.display = 'block';
+    document.getElementById('a-name').focus();
+    return;
+  }
+  const payload = {
+    name,
+    type: document.getElementById('a-type').value.trim(),
+    balance: numField('a-balance')
+  };
+
+  if (ui.editingId === 'new') D().accounts.push({ id: uid(), ...payload });
+  else {
+    const a = D().accounts.find(x => x.id === ui.editingId);
+    if (a) Object.assign(a, payload);
+  }
+
+  Store.save({ immediate: true });
+  closeEditor(false);
+  ui.tab = 'accounts';
+  render();
+  window.scrollTo(0, 0);
+}
+
+function saveExpense() {
+  const name = document.getElementById('e-name').value.trim();
+  if (!name) {
+    document.getElementById('formError').style.display = 'block';
+    document.getElementById('e-name').focus();
+    return;
+  }
+  const payload = {
+    name,
+    amount: numField('e-amount')
+  };
+
+  if (ui.editingId === 'new') D().expenses.push({ id: uid(), ...payload });
+  else {
+    const x = D().expenses.find(e => e.id === ui.editingId);
+    if (x) Object.assign(x, payload);
+  }
+
+  Store.save({ immediate: true });
+  closeEditor(false);
+  ui.tab = 'budget';
+  render();
+  window.scrollTo(0, 0);
+}
+
+function saveCurrentEditor() {
+  if (ui.editorKind === 'card') saveCard();
+  else if (ui.editorKind === 'account') saveAccount();
+  else if (ui.editorKind === 'expense') saveExpense();
+}
+
+function deleteCurrentItem() {
+  if (ui.editorKind === 'card') {
+    Store.data.cards = D().cards.filter(c => c.id !== ui.editingId);
+    ui.tab = 'cards';
+  } else if (ui.editorKind === 'account') {
+    Store.data.accounts = D().accounts.filter(a => a.id !== ui.editingId);
+    ui.tab = 'accounts';
+  } else if (ui.editorKind === 'expense') {
+    Store.data.expenses = D().expenses.filter(e => e.id !== ui.editingId);
+    ui.tab = 'budget';
+  } else {
+    return;
+  }
+  Store.save({ immediate: true });
+  closeEditor(false);
+  render();
 }
 
 function downloadBackup() {
@@ -374,36 +643,46 @@ document.addEventListener('click', async (e) => {
 
   switch (el.dataset.action) {
     case 'add-card':
-      ui.editingId = 'new'; ui.confirmDelete = false; render(); break;
+      openEditor('card', 'new'); break;
 
     case 'edit-card':
-      ui.editingId = el.dataset.id; ui.confirmDelete = false; render(); break;
+      openEditor('card', el.dataset.id); break;
+
+    case 'add-account':
+      openEditor('account', 'new'); break;
+
+    case 'edit-account':
+      openEditor('account', el.dataset.id); break;
+
+    case 'add-expense':
+      openEditor('expense', 'new'); break;
+
+    case 'edit-expense':
+      openEditor('expense', el.dataset.id); break;
 
     case 'close-editor':
-      ui.editingId = null; ui.confirmDelete = false; render(); break;
+      closeEditor(); break;
 
     case 'save-card':
-      saveCard(); break;
+    case 'save-account':
+    case 'save-expense':
+      saveCurrentEditor(); break;
 
     case 'delete-ask':
       ui.confirmDelete = true; render(); break;
 
     case 'delete-confirm':
-      Store.data.cards = D().cards.filter(c => c.id !== ui.editingId);
-      Store.save({ immediate: true });
-      ui.editingId = null; ui.confirmDelete = false; ui.tab = 'cards'; render(); break;
+      deleteCurrentItem(); break;
 
     case 'method':
       D().settings.method = el.dataset.method;
       Store.save({ immediate: true });
       render(); break;
 
-    case 'apply-extra': {
-      const left = D().budget.income - D().budget.expenses - totalMin(D().cards);
-      D().settings.extraPayment = Math.max(0, Math.round(left));
+    case 'apply-extra':
+      D().settings.extraPayment = Math.max(0, Math.round(availableForExtra()));
       Store.save({ immediate: true });
       ui.tab = 'payoff'; render(); window.scrollTo(0, 0); break;
-    }
 
     case 'export':
       downloadBackup(); break;
@@ -474,16 +753,15 @@ document.addEventListener('change', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (!ui.editingId) return;
-  if (e.key === 'Enter') { e.preventDefault(); saveCard(); }
-  if (e.key === 'Escape') { ui.editingId = null; ui.confirmDelete = false; render(); }
+  if (!ui.editorKind) return;
+  if (e.key === 'Enter') { e.preventDefault(); saveCurrentEditor(); }
+  if (e.key === 'Escape') { closeEditor(); }
 });
 
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     ui.tab = btn.dataset.tab;
-    ui.editingId = null;
-    ui.confirmDelete = false;
+    closeEditor(false);
     ui.confirmReset = false;
     render();
     window.scrollTo(0, 0);
